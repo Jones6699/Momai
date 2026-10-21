@@ -111,6 +111,10 @@ function spillArgs(tmpDir, value) {
   const file = spillArg(tmpDir, value);
   return file ? ['_file', file] : ['', value];
 }
+function scriptErrorDetail(error, fallback) {
+  const raw = String(error?.stderr || error?.stdout || error?.message || fallback).trim();
+  return (raw.split(/\r?\n/).filter(Boolean).at(-1) || fallback).replace(/^(?:ValueError|RuntimeError):\s*/, '').slice(0, 600);
+}
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
@@ -240,7 +244,7 @@ const server = createServer(async (request, response) => {
       try {
         const [suffix, value] = spillArgs(tmpDir, content);
         try { ({stdout,stderr}=await runFile(workflowPython || 'py', [...(workflowPython ? [] : ['-3']), chapterBriefScript, '--project', project, '--chapter', chapter, `--content${suffix}`, value], {cwd:workspaceRoot, timeout:180_000, windowsHide:true, maxBuffer:2_000_000, env:workflowEnvironment(cleanSettings(readSettings()))})); }
-        catch (error) { const detail=String(error?.stderr || error?.stdout || error?.message || '判别脚本没有返回错误信息').trim().slice(0, 12_000); throw new Error(`章节信息判别失败：${detail}`); }
+        catch (error) { throw new Error(`章节信息判别失败：${scriptErrorDetail(error, '判别脚本没有返回错误信息')}`); }
         try { return send(response,200,JSON.parse(stdout.trim().split(/\r?\n/).at(-1))); }
         catch { throw new Error('章节信息判别返回格式错误'); }
       } finally { rmSync(tmpDir, { recursive:true, force:true }); }
@@ -255,7 +259,7 @@ const server = createServer(async (request, response) => {
       try {
         const [suffix, value] = spillArgs(tmpDir, content);
         try { ({stdout,stderr}=await runFile(workflowPython || 'py', [...(workflowPython ? [] : ['-3']), projectBriefScript, '--project', project, `--content${suffix}`, value], {cwd:workspaceRoot, timeout:180_000, windowsHide:true, maxBuffer:2_000_000, env:workflowEnvironment(cleanSettings(readSettings()))})); }
-        catch (error) { const detail=String(error?.stderr || error?.stdout || error?.message || '简介判别脚本没有返回错误信息').trim().slice(0, 12_000); throw new Error(`小说简介判别失败：${detail}`); }
+        catch (error) { throw new Error(`小说简介判别失败：${scriptErrorDetail(error, '简介判别脚本没有返回错误信息')}`); }
         try { return send(response,200,JSON.parse(stdout.trim().split(/\r?\n/).at(-1))); }
         catch { throw new Error('小说简介判别返回格式错误'); }
       } finally { rmSync(tmpDir, { recursive:true, force:true }); }

@@ -71,9 +71,9 @@ PROVIDERS = {
 }
 
 SETTINGS_FILE = Path(__file__).with_name("工作台设置.json")
-# Windows 会让 urllib 自动读取系统代理；工作台的本地服务与模型列表均走直连，
-# 因此 LLM 生成也明确直连，避免失效代理在 TLS 握手阶段中断请求。
-DIRECT_HTTP = build_opener(ProxyHandler({}))
+# 模型请求跟随系统代理；在需要直连的网络中可设置 NOVEL_LLM_DIRECT=1。
+# Windows 的系统代理和浏览器可能一致，强制直连会使模型请求在代理网络中超时。
+LLM_HTTP = build_opener(ProxyHandler({})) if os.getenv("NOVEL_LLM_DIRECT") == "1" else build_opener()
 
 def workspace_settings() -> dict[str, Any]:
     try:
@@ -193,6 +193,9 @@ def _request_payload(policy: ModelPolicy, provider: dict[str, str]) -> dict[str,
     """构造请求体；只有确认兼容的 provider 才附加非标思考参数。"""
     payload: dict[str, Any] = {"model": policy.model, "temperature": policy.temperature}
     base_url = provider["base_url"].lower()
+    if "api.openai.com" in base_url and re.match(r"^(?:gpt-[56]|o[134])(?:[.-]|$)", policy.model, re.I):
+        # 推理模型的默认推理强度不接受 temperature；由模型采用其默认强度。
+        payload.pop("temperature")
     # SiliconFlow 的 DeepSeek-V3.2 支持 enable_thinking/thinking_budget；
     # reasoning_effort 仅适用于其 V4-Flash，传给 V3.2 会直接返回 400。
     if "siliconflow.cn" in base_url:
@@ -237,14 +240,27 @@ def _chat_completion(policy: ModelPolicy, messages: list[dict[str, str]]) -> str
             "success": False,
         }
         try:
-            with DIRECT_HTTP.open(request, timeout=policy.timeout_seconds) as response:
+            with LLM_HTTP.open(request, timeout=policy.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")[:800]
+            raw_detail = error.read().decode("utf-8", errors="replace")[:800]
+            try:
+                api_error = json.loads(raw_detail).get("error") or {}
+            except json.JSONDecodeError:
+                api_error = {}
+            code = str(api_error.get("code") or "") if isinstance(api_error, dict) else ""
+            if error.code == 401 or code == "invalid_api_key":
+                detail = "API Key 无效或已停用。请到对应提供方创建新的密钥，并在工作台「设置 → 模型」中替换。"
+            elif code == "credit_balance_exhausted":
+                detail = "API 额度不足，请检查对应平台的计费余额。"
+            elif error.code == 400:
+                detail = "模型请求参数不兼容，请检查模型名称与接口配置。"
+            else:
+                detail = f"请检查提供方状态与额度（错误代码：{code or error.code}）。"
             record["response_time"] = round(time.time() - started, 3)
             record["error"] = f"HTTP {error.code}: {detail}"
             _append_llm_log(record)
-            if error.code not in RETRYABLE_HTTP_CODES or attempt == MAX_LLM_ATTEMPTS:
+            if error.code not in RETRYABLE_HTTP_CODES or code == "credit_balance_exhausted" or attempt == MAX_LLM_ATTEMPTS:
                 raise ValueError(f"LLM 接口返回 HTTP {error.code}：{detail}") from error
             continue
         except URLError as error:

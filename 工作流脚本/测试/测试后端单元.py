@@ -144,6 +144,8 @@ _POLICY_OFF = ModelPolicy("openai", "gpt", 0.5, 180, "disabled", "low")
 def test_payload_openai_standard_only() -> None:
     payload = _request_payload(_POLICY_ON, {"base_url": "https://api.openai.com/v1"})
     assert "thinking" not in payload and "enable_thinking" not in payload and "reasoning_effort" not in payload
+    reasoning = _request_payload(ModelPolicy("OpenAI", "gpt-5.6-sol", 0.2), {"base_url": "https://api.openai.com/v1"})
+    assert "temperature" not in reasoning
 
 
 def test_payload_siliconflow_thinking() -> None:
@@ -184,7 +186,7 @@ def test_retry_on_429_then_success() -> None:
             raise HTTPError(request.full_url, 429, "rate limited", {}, io.BytesIO(b"limited"))
         return _FakeResponse()
 
-    with _patch_provider(), patch.object(LLM配置.DIRECT_HTTP, "open", flaky), patch.object(LLM配置.time, "sleep"):
+    with _patch_provider(), patch.object(LLM配置.LLM_HTTP, "open", flaky), patch.object(LLM配置.time, "sleep"):
         assert LLM配置._chat_completion(_POLICY_ON, [{"role": "user", "content": "hi"}]) == "ok"
     assert calls["n"] == 2
 
@@ -196,7 +198,7 @@ def test_no_retry_on_client_error() -> None:
         calls["n"] += 1
         raise HTTPError(request.full_url, 400, "bad request", {}, io.BytesIO(b"bad"))
 
-    with _patch_provider(), patch.object(LLM配置.DIRECT_HTTP, "open", bad_request), patch.object(LLM配置.time, "sleep"):
+    with _patch_provider(), patch.object(LLM配置.LLM_HTTP, "open", bad_request), patch.object(LLM配置.time, "sleep"):
         try:
             LLM配置._chat_completion(_POLICY_ON, [{"role": "user", "content": "hi"}])
         except ValueError as error:
@@ -206,6 +208,21 @@ def test_no_retry_on_client_error() -> None:
     assert calls["n"] == 1
 
 
+def test_invalid_key_message_does_not_echo_provider_response() -> None:
+    def invalid_key(request, timeout=None):
+        body = b'{"error":{"code":"invalid_api_key","message":"Incorrect API key provided: key_PRIVATE_PART"}}'
+        raise HTTPError(request.full_url, 401, "unauthorized", {}, io.BytesIO(body))
+
+    with _patch_provider(), patch.object(LLM配置.LLM_HTTP, "open", invalid_key):
+        try:
+            LLM配置._chat_completion(_POLICY_ON, [{"role": "user", "content": "hi"}])
+        except ValueError as error:
+            assert "API Key 无效" in str(error)
+            assert "PRIVATE_PART" not in str(error)
+        else:
+            raise AssertionError("无效密钥应报错")
+
+
 def test_retry_exhaustion_on_network_error() -> None:
     calls = {"n": 0}
 
@@ -213,7 +230,7 @@ def test_retry_exhaustion_on_network_error() -> None:
         calls["n"] += 1
         raise LLM配置.URLError("connection refused")
 
-    with _patch_provider(), patch.object(LLM配置.DIRECT_HTTP, "open", down), patch.object(LLM配置.time, "sleep"):
+    with _patch_provider(), patch.object(LLM配置.LLM_HTTP, "open", down), patch.object(LLM配置.time, "sleep"):
         try:
             LLM配置._chat_completion(_POLICY_ON, [{"role": "user", "content": "hi"}])
         except ValueError as error:
