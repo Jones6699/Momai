@@ -65,6 +65,14 @@
     download(`${item.diskName}-${chapter()}-文脉资料.json`, data);
     status(`已导出 ${data.assets.length} 份设定资料，版本 ${data.revision.slice(0, 12)}`);
   }));
+  $('handoffLanPair').addEventListener('click', () => run(async () => {
+    const item = project(); if (!item || !chapter()) throw new Error('请先选择项目与章节');
+    const pair = await api('/api/lan/pair', { project: item.diskName, chapter: chapter() });
+    $('handoffLanInfo').classList.remove('hidden');
+    $('handoffLanUrl').textContent = pair.urls[0] || '未发现局域网地址';
+    $('handoffLanToken').textContent = pair.token;
+    status('局域网配对已生成，请在手机墨脉中输入地址和配对码');
+  }));
   $('handoffImport').addEventListener('change', event => run(async () => {
     const file = event.target.files?.[0]; if (!file) return;
     try {

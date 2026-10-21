@@ -1,13 +1,16 @@
 import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { basename, extname, join, normalize, relative, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { createContextPackage, stageCandidate, listCandidates, getCandidate, adoptCandidate, commitFacts } from './handoff.mjs';
 
 const webRoot = process.cwd();
 const port = Number(process.env.NOVEL_PORT) || 4173;
+const lanMode = process.env.NOVEL_LAN === '1';
+const lanPairings = new Map();
 const workspaceRoot = resolve(webRoot, '..');
 const projectsRoot = join(workspaceRoot, '小说项目');
 const scoringRoot = join(webRoot, '..', '工作流脚本', '文风评分');
@@ -40,7 +43,7 @@ const types = { '.css':'text/css; charset=utf-8', '.html':'text/html; charset=ut
 const textExtensions = new Set(['.md', '.txt', '.json', '.jsonl', '.yaml', '.yml']);
 const writableTextExtensions = new Set(['.md', '.txt', '.json', '.yaml', '.yml']);
 
-function send(response, status, body) { response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' }); response.end(JSON.stringify(body)); }
+function send(response, status, body) { response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...(lanMode ? {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'Content-Type'} : {}) }); response.end(JSON.stringify(body)); }
 function readBody(request) { return new Promise((resolveBody, reject) => { let raw = ''; request.setEncoding('utf8'); request.on('data', chunk => { raw += chunk; if (raw.length > 30_000_000) reject(new Error('请求内容过大')); }); request.on('end', () => { try { resolveBody(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('请求格式错误')); } }); request.on('error', reject); }); }
 function safeSegment(value, label) { if (typeof value !== 'string' || !value.trim() || value.includes('..') || /[\\/:*?"<>|]/.test(value)) throw new Error(`${label}不合法`); return value.trim(); }
 function safePath(value) { if (typeof value !== 'string' || !value || value.startsWith('/') || value.startsWith('\\') || value.includes('..')) throw new Error('文件路径不合法'); const parts = value.replaceAll('\\', '/').split('/'); if (parts.some(part => !part || /[:*?"<>|]/.test(part))) throw new Error('文件路径不合法'); return parts.join('/'); }
@@ -69,10 +72,30 @@ function rejectForeignSource(request, response) {
   const host = String(request.headers.host || '');
   const origin = String(request.headers.origin || '');
   const originLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/i.test(origin);
-  if (!localHostPattern.test(host) || (origin && origin !== 'null' && !originLocal)) {
+  const allowedLan = lanMode && (!origin || origin === 'null' || /^capacitor:\/\//i.test(origin) || /^https?:\/\/(?:localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(origin));
+  if ((!localHostPattern.test(host) && !allowedLan) || (origin && origin !== 'null' && !originLocal && !allowedLan)) {
     response.writeHead(403, { 'Content-Type':'text/plain; charset=utf-8' }); response.end('Forbidden'); return true;
   }
   return false;
+}
+
+function lanAddresses() {
+  const addresses = [];
+  for (const entries of Object.values(networkInterfaces())) for (const item of entries || []) {
+    if (item.family === 'IPv4' && !item.internal) addresses.push(item.address);
+  }
+  return [...new Set(addresses)];
+}
+function createLanPair(project, chapter) {
+  const token = randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
+  const expiresAt = Date.now() + 30 * 60 * 1000;
+  lanPairings.set(token, { project, chapter, expiresAt });
+  return { token, expiresAt: new Date(expiresAt).toISOString(), urls: lanAddresses().map(address => `http://${address}:${port}`) };
+}
+function paired(token) {
+  const key = String(token || '').toUpperCase(), value = lanPairings.get(key);
+  if (!value || value.expiresAt < Date.now()) { if (value) lanPairings.delete(key); throw new Error('局域网配对码无效或已过期'); }
+  return value;
 }
 
 // Windows 命令行上限约 32K 字符：超长输入写入临时文件，由 Python 端用 --*_file 读取。
@@ -91,9 +114,21 @@ function spillArgs(tmpDir, value) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
   if (rejectForeignSource(request, response)) return;
-  if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+  if (request.method === 'OPTIONS') { response.writeHead(204, lanMode ? {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'} : {}); response.end(); return; }
   try {
     if (url.pathname === '/api/projects' && request.method === 'GET') return send(response, 200, { projects:projectNames() });
+    if (url.pathname === '/api/lan/pair' && request.method === 'POST') {
+      if (!lanMode) throw new Error('当前服务未开启局域网模式，请用 NOVEL_LAN=1 启动');
+      const body=await readBody(request), project=safeSegment(body.project,'项目名'), chapter=safeSegment(body.chapter,'章节名');
+      projectPath(project); return send(response,200,createLanPair(project,chapter));
+    }
+    if (url.pathname === '/api/lan/context' && request.method === 'GET') {
+      const pair=paired(url.searchParams.get('token')); return send(response,200,createContextPackage(projectPath(pair.project),pair.project,pair.chapter));
+    }
+    if (url.pathname === '/api/lan/candidate' && request.method === 'POST') {
+      const body=await readBody(request), pair=paired(body.token);
+      return send(response,201,stageCandidate(projectPath(pair.project),pair.project,{...body.package,project:pair.project,chapter:pair.chapter}));
+    }
     if (url.pathname === '/api/handoff/context' && request.method === 'GET') {
       const project=safeSegment(url.searchParams.get('project'),'项目名'), chapter=safeSegment(url.searchParams.get('chapter'),'章节名');
       return send(response,200,createContextPackage(projectPath(project),project,chapter));
@@ -231,4 +266,4 @@ const server = createServer(async (request, response) => {
   response.writeHead(200, { 'Content-Type':contentType, 'Cache-Control':'no-store, max-age=0' }); createReadStream(filePath).pipe(response);
 });
 server.on('error', error => { if (error?.code === 'EADDRINUSE') { console.error(`端口 ${port} 已被占用：可能已有一个工作台正在运行（直接打开 http://127.0.0.1:${port} 即可），或请关闭占用该端口的程序后重试。`); process.exit(1); } throw error; });
-server.listen(port, '127.0.0.1', () => console.log(`http://127.0.0.1:${port}`));
+server.listen(port, lanMode ? '0.0.0.0' : '127.0.0.1', () => console.log(`${lanMode ? '局域网模式' : '本机模式'}: http://127.0.0.1:${port}`));

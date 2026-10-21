@@ -24,7 +24,7 @@ echo "按 Ctrl+C 即可停止服务。"
 echo
 
 cd web
-node server.mjs &
+NOVEL_LAN=1 node server.mjs &
 SERVER_PID=$!
 
 cleanup() {
