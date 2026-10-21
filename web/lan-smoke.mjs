@@ -19,12 +19,14 @@ test('局域网章节资料、手机候选稿、桌面采用和事实入账', as
   const root = mkdtempSync(join(tmpdir(), 'momai-lan-e2e-'));
   const web = join(root, 'web');
   mkdirSync(web);
+  mkdirSync(join(root, '工作流脚本'));
   for (const name of ['server.mjs', 'handoff.mjs']) copyFileSync(new URL(name, import.meta.url), join(web, name));
+  writeFileSync(join(web, 'index.html'), '<!doctype html><title>Momai smoke</title>', 'utf8');
   const port = await freePort();
   const childEnv = { ...process.env, NOVEL_LAN: '1', NOVEL_PORT: String(port) };
   delete childEnv.NODE_TEST_CONTEXT;
-  const server = spawn(process.execPath, ['server.mjs'], {
-    cwd: web, env: childEnv, stdio: 'ignore', windowsHide: true,
+  const server = spawn(process.execPath, ['web/server.mjs'], {
+    cwd: root, env: childEnv, stdio: 'ignore', windowsHide: true,
   });
   const base = `http://127.0.0.1:${port}`;
   const request = async (path, method = 'GET', body) => {
@@ -37,6 +39,12 @@ test('局域网章节资料、手机候选稿、桌面采用和事实入账', as
       try { await request('/api/projects'); ready = true; break; } catch { await delay(100); }
     }
     assert.ok(ready, '局域网服务未启动');
+    const page = await fetch(base);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Momai smoke/);
+    const settings = await request('/api/settings', 'PUT', { theme: 'dark', providers: [] });
+    assert.equal(settings.status, 200);
+    assert.equal((await request('/api/settings')).data.settings.theme, 'dark');
     const project = '原创-局域网通路验收';
     const chapter = '第1章';
     assert.equal((await request('/api/projects', 'POST', { type: '原创', name: '局域网通路验收', defaultAssets: [] })).status, 201);

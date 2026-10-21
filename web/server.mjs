@@ -3,11 +3,12 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { basename, extname, join, normalize, relative, resolve } from 'node:path';
+import { basename, dirname, extname, join, normalize, relative, resolve } from 'node:path';
 import { tmpdir, networkInterfaces } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { createContextPackage, stageCandidate, listCandidates, getCandidate, adoptCandidate, commitFacts } from './handoff.mjs';
 
-const webRoot = process.cwd();
+const webRoot = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.NOVEL_PORT) || 4173;
 const lanMode = process.env.NOVEL_LAN === '1';
 const lanPairings = new Map();
