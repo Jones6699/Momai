@@ -88,6 +88,7 @@ def main() -> None:
     module = TASK_MODULES.get(args.task)
     if not module: fail("未知流程任务：" + args.task)
     outputs = RUNNERS[module](args.task, base, data)
+    outputs = [str(path).replace('\\', '/') for path in outputs]
     usage = get_llm_call_stats()
     print(json.dumps({"ok": True, "outputs": outputs, "usage": usage}, ensure_ascii=False))
 if __name__ == "__main__":

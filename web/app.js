@@ -248,7 +248,20 @@ projectForm.addEventListener('submit', event => { const type = document.querySel
   const stages = project => (project.type === '同人' ? initFan : initCommon).filter(enabled);
   const chapterStages = () => chapterFlow.filter(enabled);
   const chapter = project => project.chapters.find(item => item.id === project.chapterId);
-  const add = (project, group, path) => { const name=baseName(path); let key=name; if (project.paths[name] && project.paths[name] !== path) key=String(path); if (!project.files[group].includes(key)) project.files[group].push(key); if (!project.paths[key]) project.paths[key] = String(path); return key; };
+  const add = (project, group, path) => {
+    path = String(path || '').replaceAll('\\', '/');
+    if (!path) throw new Error('流程返回的文件路径为空');
+    const directory = path.split('/')[0];
+    group = groups.includes(directory) ? directory : (groups.includes(group) ? group : '知识库');
+    project.paths ||= {};
+    project.files ||= blankFiles();
+    if (!Array.isArray(project.files[group])) project.files[group] = [];
+    const name=baseName(path);
+    const key=project.paths[name] && project.paths[name] !== path ? path : name;
+    if (!project.files[group].includes(key)) project.files[group].push(key);
+    project.paths[key] = path;
+    return key;
+  };
   function localPath(project, name) {
     if (project.paths?.[name]) return project.paths[name];
     if (name === '小说简介.md' || name === '世界观.md' || name === '世界观.json' || name === '语言风格.md' || name === '信息账本.md') return `知识库/${name}`;
