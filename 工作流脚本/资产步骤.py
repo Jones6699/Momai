@@ -1,11 +1,41 @@
 """世界观、语言风格、角色卡、关系卡、剧情书/卷和信息账本的真实步骤实现。"""
 from __future__ import annotations
 import json
+import os
+import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 from LLM配置 import generate_markdown, policy_for
 from 共享 import checked_write, context, fail, read_text, run_reference, safe_name, stage_project, worldview_path
 import 结构化JSON
+
+def _save_relation_progress(path: Path, value: dict[str, Any]) -> bool:
+    """Windows 短暂文件占用时重试；持续占用则保留独立快照，不中断生成。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='关系卡进度-', suffix='.json', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+        # 必须先关闭临时文件句柄，再执行 Windows 原子替换。
+        for attempt in range(4):
+            try:
+                os.replace(temporary, path)
+                return True
+            except PermissionError:
+                if attempt < 3:
+                    time.sleep(0.1 * (attempt + 1))
+        return False
+    except OSError:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
 
 def _relation_batch(base: Path, relations: list[dict[str, Any]], data: dict[str, Any]) -> list[str]:
     """逐张落盘；默认复用完整卡片，单项失败不丢弃其余结果。"""
@@ -14,10 +44,13 @@ def _relation_batch(base: Path, relations: list[dict[str, Any]], data: dict[str,
     progress_path = base / "运行记录" / "关系卡生成进度.json"
     progress_path.parent.mkdir(parents=True, exist_ok=True)
     items: list[dict[str, Any]] = []
+    progress_warning = False
     def save_progress() -> None:
-        temporary = progress_path.with_suffix('.tmp')
-        temporary.write_text(json.dumps({"total": len(relations), "completed": sum(x['status'] == 'completed' for x in items), "items": items}, ensure_ascii=False, indent=2), encoding='utf-8')
-        temporary.replace(progress_path)
+        nonlocal progress_warning
+        saved = _save_relation_progress(progress_path, {"total": len(relations), "completed": sum(x['status'] == 'completed' for x in items), "items": items})
+        if not saved and not progress_warning:
+            print('进度文件暂不可更新，关系卡继续生成；断点续传仍以已保存的完整关系卡为准。', file=sys.stderr)
+            progress_warning = True
     for rel in relations:
         a, b = safe_name(rel['character_a'], '角色 A'), safe_name(rel['character_b'], '角色 B')
         items.append({"character_a": a, "character_b": b, "status": "pending"})

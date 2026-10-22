@@ -363,6 +363,21 @@ def test_brief_script_reads_content_file() -> None:
             assert "项目不存在" in combined, f"{script} 未按预期走到项目校验：{combined[:300]}"
 
 
+def test_relation_progress_handles_windows_file_lock() -> None:
+    import 资产步骤
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / '进度.json'
+        path.write_text('{"completed": 1}', encoding='utf-8')
+        with patch.object(资产步骤.os, 'replace', side_effect=PermissionError('WinError 5')), patch.object(资产步骤.time, 'sleep'):
+            assert 资产步骤._save_relation_progress(path, {'completed': 2}) is False
+        assert json.loads(path.read_text(encoding='utf-8'))['completed'] == 1
+        snapshots = list(Path(tmp).glob('关系卡进度-*.json'))
+        assert len(snapshots) == 1
+        assert json.loads(snapshots[0].read_text(encoding='utf-8'))['completed'] == 2
+        assert 资产步骤._save_relation_progress(path, {'completed': 3})
+        assert json.loads(path.read_text(encoding='utf-8'))['completed'] == 3
+
+
 def test_relation_batch_resumes_and_limits_context() -> None:
     import 资产步骤
     import 结构化JSON
