@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { basename, dirname, extname, join, normalize, relative, resolve } from 'node:path';
 import { tmpdir, networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import QRCode from 'qrcode';
 import { createContextPackage, stageCandidate, listCandidates, getCandidate, adoptCandidate, commitFacts } from './handoff.mjs';
 
 const webRoot = dirname(fileURLToPath(import.meta.url));
@@ -87,11 +88,13 @@ function lanAddresses() {
   }
   return [...new Set(addresses)];
 }
-function createLanPair(project, chapter) {
+async function createLanPair(project, chapter) {
   const token = randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
   const expiresAt = Date.now() + 30 * 60 * 1000;
   lanPairings.set(token, { project, chapter, expiresAt });
-  return { token, expiresAt: new Date(expiresAt).toISOString(), urls: lanAddresses().map(address => `http://${address}:${port}`) };
+  const urls = lanAddresses().map(address => `http://${address}:${port}`);
+  const qr = JSON.stringify({ version: 1, url: urls[0] || `http://127.0.0.1:${port}`, token, expiresAt });
+  return { token, expiresAt: new Date(expiresAt).toISOString(), urls, qr, qrDataUrl: await QRCode.toDataURL(qr, { errorCorrectionLevel: 'M', margin: 2, width: 280 }) };
 }
 function paired(token) {
   const key = String(token || '').toUpperCase(), value = lanPairings.get(key);
@@ -125,7 +128,7 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/lan/pair' && request.method === 'POST') {
       if (!lanMode) throw new Error('当前服务未开启局域网模式，请用 NOVEL_LAN=1 启动');
       const body=await readBody(request), project=safeSegment(body.project,'项目名'), chapter=safeSegment(body.chapter,'章节名');
-      projectPath(project); return send(response,200,createLanPair(project,chapter));
+      projectPath(project); return send(response,200,await createLanPair(project,chapter));
     }
     if (url.pathname === '/api/lan/context' && request.method === 'GET') {
       const pair=paired(url.searchParams.get('token')); return send(response,200,createContextPackage(projectPath(pair.project),pair.project,pair.chapter));

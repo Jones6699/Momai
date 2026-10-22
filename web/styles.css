@@ -150,6 +150,7 @@ body[data-theme="dark"] .api-setup-prompt > div:last-child { background:#202126;
 .handoff-lan-info { display:grid; gap:4px; padding:10px 12px; border:1px solid #d9c184; border-radius:9px; background:#fff8e8; color:#76551d; }
 .handoff-lan-info span { font-family:ui-monospace,monospace; font-size:13px; }
 .handoff-lan-info code { width:max-content; padding:5px 9px; border-radius:6px; background:#18233a; color:#f6d889; font-size:18px; letter-spacing:.18em; }
+.handoff-lan-qr { width:180px; height:180px; padding:8px; background:#fff; border-radius:8px; }
 @media(max-width:700px) { .handoff-fact { grid-template-columns:22px 1fr 1fr; }.handoff-fact input[type=text] { grid-column:2 / -1; } }
 
 /* 墨脉视觉重构：暖纸张底色 + 靛青工作流 + 琥珀证据强调。 */

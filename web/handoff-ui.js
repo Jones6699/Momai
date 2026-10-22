@@ -69,6 +69,7 @@
     const item = project(); if (!item || !chapter()) throw new Error('请先选择项目与章节');
     const pair = await api('/api/lan/pair', { project: item.diskName, chapter: chapter() });
     $('handoffLanInfo').classList.remove('hidden');
+    $('handoffLanQr').src = pair.qrDataUrl || '';
     $('handoffLanUrl').textContent = pair.urls[0] || '未发现局域网地址';
     $('handoffLanToken').textContent = pair.token;
     status('局域网配对已生成，请在手机墨脉中输入地址和配对码');

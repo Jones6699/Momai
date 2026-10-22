@@ -88,10 +88,10 @@
     <div class="modal hidden" id="handoffModal" role="dialog" aria-modal="true" aria-label="墨脉桥">
       <div class="modal-card handoff-card">
         <div class="modal-title"><strong>墨脉桥 · 移动草稿与证据入账</strong><button type="button" id="handoffClose" aria-label="关闭">×</button></div>
-        <p class="form-note">先导出本章设定到 InkFlow；手机上写作后将候选稿导回。采用候选稿会备份旧正文，并进入原有校验流程。</p>
+        <p class="form-note">先导出本章设定到 Threadbook；手机上写作后将候选稿导回。采用候选稿会备份旧正文，并进入原有校验流程。</p>
         <label>目标章节 <select id="handoffChapter"></select></label>
         <div class="handoff-actions"><button type="button" id="handoffExport">导出章节资料 JSON</button><button type="button" id="handoffLanPair">生成局域网配对码</button><label class="handoff-upload">导入手机候选稿 JSON<input id="handoffImport" type="file" accept=".json,application/json" /></label></div>
-        <div id="handoffLanInfo" class="handoff-lan-info hidden"><strong>局域网连接</strong><span id="handoffLanUrl"></span><code id="handoffLanToken"></code><small>手机与电脑连接同一 Wi-Fi，在墨脉桥中输入地址和配对码。配对码 30 分钟后失效。</small></div>
+        <div id="handoffLanInfo" class="handoff-lan-info hidden"><strong>局域网连接</strong><img id="handoffLanQr" class="handoff-lan-qr" alt="Threadbook 局域网配对二维码" /><span id="handoffLanUrl"></span><code id="handoffLanToken"></code><small>在 Threadbook 的“协作桥”中点击扫码连接。二维码和配对码 30 分钟后失效；也可以手动输入地址和配对码。</small></div>
         <p id="handoffStatus" role="status"></p>
         <h3>待采用候选稿</h3><div id="handoffCandidates"></div><textarea id="handoffPreview" readonly placeholder="选择候选稿后预览正文"></textarea>
         <button type="button" id="handoffAdopt">采用所选稿并进入校验</button>
