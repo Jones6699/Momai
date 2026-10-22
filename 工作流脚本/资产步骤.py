@@ -7,6 +7,60 @@ from LLM配置 import generate_markdown, policy_for
 from 共享 import checked_write, context, fail, read_text, run_reference, safe_name, stage_project, worldview_path
 import 结构化JSON
 
+def _relation_batch(base: Path, relations: list[dict[str, Any]], data: dict[str, Any]) -> list[str]:
+    """逐张落盘；默认复用完整卡片，单项失败不丢弃其余结果。"""
+    outputs: list[str] = []
+    failures: list[str] = []
+    progress_path = base / "运行记录" / "关系卡生成进度.json"
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    items: list[dict[str, Any]] = []
+    def save_progress() -> None:
+        temporary = progress_path.with_suffix('.tmp')
+        temporary.write_text(json.dumps({"total": len(relations), "completed": sum(x['status'] == 'completed' for x in items), "items": items}, ensure_ascii=False, indent=2), encoding='utf-8')
+        temporary.replace(progress_path)
+    for rel in relations:
+        a, b = safe_name(rel['character_a'], '角色 A'), safe_name(rel['character_b'], '角色 B')
+        items.append({"character_a": a, "character_b": b, "status": "pending"})
+    save_progress()
+    for rel, item in zip(relations, items):
+        a, b = item['character_a'], item['character_b']
+        payload = {"character_a": a, "character_b": b, "relationship": rel.get('relationship') or '',
+                   "output_guidance": "仅生成这一对角色的关系卡；每个描述字段不超过150字，不扩写其他角色，不新增无依据的经历。"}
+        if data.get('user_input'):
+            payload['user_input'] = data['user_input']
+        item['status'] = 'running'
+        save_progress()
+        try:
+            reused = None
+            if not data.get('regenerate'):
+                for left, right in ((a, b), (b, a)):
+                    jp, mp = 结构化JSON.output_paths('compile_relation', base, {'character_a': left, 'character_b': right})
+                    try:
+                        card = json.loads(jp.read_text(encoding='utf-8'))
+                        if (card.get('character_a'), card.get('character_b')) == (left, right) and all(isinstance(card.get(k), str) and card[k].strip() for k in ('称呼','关系','情感','共同经历','当前态度')) and mp.is_file() and mp.stat().st_size:
+                            reused = [str(mp.relative_to(base)), str(jp.relative_to(base))]
+                            break
+                    except (OSError, ValueError, AttributeError):
+                        pass
+            if reused:
+                outputs.extend(reused)
+                item['reused'] = True
+            else:
+                sources = [base / '知识库' / '小说简介.md', worldview_path(base), base / '知识库' / '信息账本.md']
+                for name in (a, b):
+                    jp, mp = 结构化JSON.output_paths('generate_character', base, {'name': name})
+                    sources.append(mp if mp.exists() else jp)
+                outputs.extend(结构化JSON.run('compile_relation', base, payload, context(base, sources)))
+            item['status'] = 'completed'
+        except Exception as error:
+            item['status'] = 'failed'
+            item['error'] = str(error)
+            failures.append(f'{a}—{b}：{error}')
+        save_progress()
+    if failures:
+        fail(f'关系卡已完成 {sum(x["status"] == "completed" for x in items)}/{len(items)}。已完成卡片已保存，再次重试只补未完成项。失败详情：' + '；'.join(failures))
+    return outputs
+
 def _generate(base: Path, task: str, data: dict[str, Any], output: Path, contract: str, sources: list[Path]) -> list[str]:
     common = [base / "知识库" / "小说简介.md", base / "运行记录" / "初始化资料.md"]
     checked_write(base, task, output, generate_markdown(step_id=task, fields=data, context=context(base, [*common, *sources]), output_contract=contract))
@@ -116,13 +170,5 @@ def run(task: str, base: Path, data: dict[str, Any]) -> list[str]:
                     relations.append({"character_a": a, "character_b": b, "relationship": rel.get("关系") or rel.get("relationship") or ""})
         if not relations:
             fail("没有可生成的关系：角色名单中缺少 relations，也没有已有关系卡可更新")
-        outputs: list[str] = []
-        for rel in relations:
-            payload = {"character_a": rel["character_a"], "character_b": rel["character_b"]}
-            if rel.get("relationship"):
-                payload["relationship"] = rel["relationship"]
-            if data.get("user_input"):
-                payload["user_input"] = data["user_input"]
-            outputs += _json(base, "compile_relation", payload, [worldview_path(base), base / "知识库" / "信息账本.md"])
-        return outputs
+        return _relation_batch(base, relations, data)
     fail("资产步骤不支持：" + task)

@@ -297,6 +297,13 @@ def run(task: str, base: Path, data: dict[str, Any], context: str) -> list[str]:
     schema = TASK_JSON_SCHEMAS[task]
     payload = generate_json(step_id=task, fields=data, context=context, json_schema=schema)
 
+    if task == 'compile_relation':
+        # 路径身份由用户输入固定，避免模型改名后写入另一对角色的文件。
+        for key in ('character_a', 'character_b'):
+            payload[key] = data[key]
+        if not all(isinstance(payload.get(key), str) and payload[key].strip() for key in ('称呼', '关系', '情感', '共同经历', '当前态度')):
+            raise ValueError('关系卡字段不完整，未写入文件，请重试当前关系')
+
     # 补齐用于路径/渲染但不一定由 LLM 回填的身份字段
     for key in ("chapter", "name", "character_a", "character_b", "volume", "kind"):
         if key in data and key not in payload:

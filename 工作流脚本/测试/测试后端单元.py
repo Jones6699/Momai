@@ -363,6 +363,40 @@ def test_brief_script_reads_content_file() -> None:
             assert "项目不存在" in combined, f"{script} 未按预期走到项目校验：{combined[:300]}"
 
 
+def test_relation_batch_resumes_and_limits_context() -> None:
+    import 资产步骤
+    import 结构化JSON
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        (base / '运行记录').mkdir()
+        (base / '运行记录' / '初始化资料.md').write_text('不应重复传入的长篇原始资料', encoding='utf-8')
+        calls = []
+        broken = {'value': True}
+        def generate(**kwargs):
+            fields = kwargs['fields']
+            calls.append(fields['character_b'])
+            assert '不应重复传入' not in kwargs['context']
+            if fields['character_b'] == '乙' and broken['value']:
+                raise ValueError('模拟连接重置')
+            return {'character_a': '模型改名', 'character_b': '模型改名', **{k: '已确认' for k in ('称呼','关系','情感','共同经历','当前态度')}}
+        relations = [{'character_a':'甲','character_b':'乙'}, {'character_a':'甲','character_b':'丙'}]
+        with patch.object(结构化JSON, 'generate_json', generate):
+            try:
+                资产步骤._relation_batch(base, relations, {})
+            except ValueError as error:
+                assert '1/2' in str(error)
+            else:
+                raise AssertionError('部分失败必须保持阶段未完成')
+            assert calls == ['乙', '丙'], calls
+            broken['value'] = False
+            result = 资产步骤._relation_batch(base, relations, {})
+            assert calls == ['乙', '丙', '乙'], calls
+            assert len(result) == 4
+            progress = json.loads((base / '运行记录' / '关系卡生成进度.json').read_text(encoding='utf-8'))
+            assert progress['completed'] == 2
+            assert progress['items'][1]['reused']
+
+
 def main() -> int:
     checks = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
     for name, fn in checks:
